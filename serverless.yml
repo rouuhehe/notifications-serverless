@@ -1,0 +1,108 @@
+org: yaritzalopez
+service: notifications-serverless
+
+provider:
+  name: aws
+  runtime: python3.13
+  region: us-east-1
+  memorySize: 512
+  timeout: 10
+  iam:
+    role: arn:aws:iam::157918330129:role/LabRole
+  environment:
+    ORDER_EVENTS_TOPIC: !Ref OrderEventsTopic
+    ADMIN_EVENTS_TOPIC: !Ref AdminEventsTopic
+    SOURCE_EMAIL: "notificaciones.bembos@tu-dominio.com"
+    ADMIN_EMAILS: "admin1@empresa.com,admin2@empresa.com"
+
+resources:
+  Resources:
+
+    # ----------------------------
+    # SNS Topics
+    # ----------------------------
+    OrderEventsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: order-events-topic-${sls:stage}
+
+    AdminEventsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: admin-events-topic-${sls:stage}
+
+    # ----------------------------
+    # SQS Queues
+    # ----------------------------
+    OrderEmailsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: order-emails-queue-${sls:stage}
+
+    AdminEmailsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: admin-emails-queue-${sls:stage}
+
+    # SNS → SQS Subscriptions
+    OrderEventsSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref OrderEventsTopic
+        Protocol: sqs
+        Endpoint: !GetAtt OrderEmailsQueue.Arn
+
+    AdminEventsSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref AdminEventsTopic
+        Protocol: sqs
+        Endpoint: !GetAtt AdminEmailsQueue.Arn
+
+    # Allow SNS to send to SQS
+    OrderEmailsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref OrderEmailsQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: sqs:SendMessage
+              Resource: !GetAtt OrderEmailsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref OrderEventsTopic
+
+    AdminEmailsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref AdminEmailsQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: sqs:SendMessage
+              Resource: !GetAtt AdminEmailsQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: !Ref AdminEventsTopic
+
+functions:
+
+  sendOrderEmail:
+    handler: sendOrderEmail.lambda_handler
+    events:
+      - sqs:
+          arn: !GetAtt OrderEmailsQueue.Arn
+          batchSize: 1
+
+  sendAdminEmail:
+    handler: sendAdminEmail.lambda_handler
+    events:
+      - sqs:
+          arn: !GetAtt AdminEmailsQueue.Arn
+          batchSize: 1
+
